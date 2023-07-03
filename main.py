@@ -41,24 +41,8 @@ try:
         db = client['TPscrapiong']
         collection = db['exemple']
 
-        # Extraire les balises de titre de la page
-        title_tags = soup.find_all(['title', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
-
-        # Extraire les balises d'emphase de la page
-        emphasis_tags = soup.find_all(['b', 'strong', 'em'])
-
-        # Récupérer le contenu des balises de titre et d'emphase
-        title_content = [tag.get_text().strip() for tag in title_tags]
-        emphasis_content = [tag.get_text().strip() for tag in emphasis_tags]
-
-        # Insérer le premier document avec le lien de la page principale
-        collection.insert_one({
-            'url': 'https://fr.wikipedia.org/wiki/France',
-            'text': 'France',
-            'title': title_content,
-            'emphasis': emphasis_content,
-            'links': unique_links
-        })
+        # Liste pour stocker tous les liens générés par les nouvelles pages
+        all_generated_links = set(link['url'] for link in unique_links)
 
         # Insérer les méta-données dans la collection
         for link in unique_links[:10]:
@@ -84,13 +68,39 @@ try:
                         title_content = [tag.get_text().strip() for tag in title_tags]
                         emphasis_content = [tag.get_text().strip() for tag in emphasis_tags]
 
-                        # Insérer les méta-données dans la collection
+                        # Extraire les liens de la nouvelle page
+                        new_links = []
+                        for tag in page_soup.find_all('a'):
+                            if 'href' in tag.attrs:
+                                new_link_url = urljoin(link['url'], tag['href'])
+                                new_link_url = urldefrag(new_link_url)[0]
+                                new_link_text = tag.get_text().strip()
+                                if 'fr.wikipedia.org' in new_link_url:
+                                    new_links.append({'url': new_link_url, 'text': new_link_text})
+
+                        # Filtrer les nouveaux liens en supprimant les doublons
+                        unique_new_links = [link for link in new_links if link['url'] not in all_generated_links]
+
+                        # Mettre à jour la liste des liens générés par les nouvelles pages
+                        all_generated_links.update(link['url'] for link in unique_new_links)
+
+                        # # Obtenir la différence entre unique_new_links et all_generated_links
+                        # difference_links = [link for link in unique_new_links if link['url'] not in all_generated_links]
+                        #
+                        # # Afficher la différence des URL
+                        # for link in difference_links:
+                        #     print(link['url'])
+
                         collection.insert_one({
                             'url': link['url'],
                             'text': link['text'],
                             'title': title_content,
-                            'emphasis': emphasis_content
+                            'emphasis': emphasis_content,
+                            'link': unique_new_links
                         })
+                        # Mettre à jour le champ 'link' du document avec tous les liens
+                        collection.update_one({'url': link['url']}, {'$set': {'link': unique_new_links}})
+
                         # Sortir de la boucle si la récupération réussit
                         break
 
@@ -101,6 +111,7 @@ try:
                     print(f'Erreur lors de la requête pour la page {link["url"]}: {e}')
                 # Attendre le délai spécifié avant la prochaine tentative
                 time.sleep(retry_interval)
+
     else:
         print('La requête a échoué avec le code de statut :', response.status_code)
 
