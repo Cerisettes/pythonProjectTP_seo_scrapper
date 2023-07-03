@@ -1,7 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 from pymongo import MongoClient
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urldefrag
 
 try:
     # Envoyer une requête HTTP à l'URL souhaitée
@@ -17,9 +17,13 @@ try:
         links = []
         for tag in link_tags:
             if 'href' in tag.attrs:
+                # Enlève le fragment des url (ce qui se trouve après le #)
                 link_url = urljoin(response.url, tag['href'])
+                link_url = urldefrag(link_url)[0]
                 link_text = tag.get_text().strip()
-                links.append({'url': link_url, 'text': link_text})
+
+                if 'fr.wikipedia.org' in link_url:
+                    links.append({'url': link_url, 'text': link_text})
 
         # Filtrer les liens en supprimant les doublons
         unique_links = list({link['url']: link for link in links}.values())
@@ -45,7 +49,7 @@ try:
             'text': 'France',
             'title': title_content,
             'emphasis': emphasis_content,
-            'links': links
+            'links': unique_links
         })
 
         # Insérer les méta-données dans la collection
