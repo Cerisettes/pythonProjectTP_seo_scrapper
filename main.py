@@ -2,6 +2,14 @@ import requests
 from bs4 import BeautifulSoup
 from pymongo import MongoClient
 from urllib.parse import urljoin, urldefrag
+import time
+
+
+# Nombre maximum de tentatives
+max_attempts = 10
+
+# Temps d'attente en secondes entre chaque tentative
+retry_interval = 60
 
 try:
     # Envoyer une requête HTTP à l'URL souhaitée
@@ -54,36 +62,45 @@ try:
 
         # Insérer les méta-données dans la collection
         for link in unique_links[:10]:
-            try:
-                # Envoyer une requête HTTP à l'URL du lien
-                page_response = requests.get(link['url'])
+            # Boucle pour les tentatives de récupération
+            for attempt in range(1, max_attempts + 1):
 
-                # Vérifier si la requête a réussi
-                if page_response.status_code == 200:
-                    # Analyser le contenu HTML de la réponse de la page
-                    page_soup = BeautifulSoup(page_response.content, 'html.parser')
+                try:
+                    # Envoyer une requête HTTP à l'URL du lien
+                    page_response = requests.get(link['url'])
 
-                    # Extraire les balises de titre de la page
-                    title_tags = page_soup.find_all(['title', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+                    # Vérifier si la requête a réussi
+                    if page_response.status_code == 200:
+                        # Analyser le contenu HTML de la réponse de la page
+                        page_soup = BeautifulSoup(page_response.content, 'html.parser')
 
-                    # Extraire les balises d'emphase de la page
-                    emphasis_tags = page_soup.find_all(['b', 'strong', 'em'])
+                        # Extraire les balises de titre de la page
+                        title_tags = page_soup.find_all(['title', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
 
-                    # Récupérer le contenu des balises de titre et d'emphase
-                    title_content = [tag.get_text().strip() for tag in title_tags]
-                    emphasis_content = [tag.get_text().strip() for tag in emphasis_tags]
+                        # Extraire les balises d'emphase de la page
+                        emphasis_tags = page_soup.find_all(['b', 'strong', 'em'])
 
-                    # Insérer les méta-données dans la collection
-                    collection.insert_one({
-                        'url': link['url'],
-                        'text': link['text'],
-                        'title': title_content,
-                        'emphasis': emphasis_content
-                    })
-                else:
-                    print(f'La requête pour la page {link["url"]} a échoué avec le code de statut : {page_response.status_code}')
-            except requests.exceptions.RequestException as e:
-                print(f'Erreur lors de la requête pour la page {link["url"]}: {e}')
+                        # Récupérer le contenu des balises de titre et d'emphase
+                        title_content = [tag.get_text().strip() for tag in title_tags]
+                        emphasis_content = [tag.get_text().strip() for tag in emphasis_tags]
+
+                        # Insérer les méta-données dans la collection
+                        collection.insert_one({
+                            'url': link['url'],
+                            'text': link['text'],
+                            'title': title_content,
+                            'emphasis': emphasis_content
+                        })
+                        # Sortir de la boucle si la récupération réussit
+                        break
+
+                    else:
+                        print(f'La requête pour la page {link["url"]} a '
+                              f'échoué avec le code de statut : {page_response.status_code}')
+                except requests.exceptions.RequestException as e:
+                    print(f'Erreur lors de la requête pour la page {link["url"]}: {e}')
+                # Attendre le délai spécifié avant la prochaine tentative
+                time.sleep(retry_interval)
     else:
         print('La requête a échoué avec le code de statut :', response.status_code)
 
