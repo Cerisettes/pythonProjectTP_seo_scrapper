@@ -11,6 +11,42 @@ max_attempts = 10
 # Temps d'attente en secondes entre chaque tentative
 retry_interval = 60
 
+
+def get_url_text(url, soupe):
+    # Extraire les URL de liens et leur texte associé
+    link_tags = soupe.find_all('a')
+    links = []
+    for tag in link_tags:
+        if 'href' in tag.attrs:
+            # Enlève le fragment des url (ce qui se trouve après le #)
+            link_url = urljoin(url, tag['href'])
+            link_url = urldefrag(link_url)[0]
+            link_text = tag.get_text().strip()
+
+            if 'fr.wikipedia.org' in link_url:
+                links.append({'url': link_url, 'text': link_text})
+    return links
+
+
+def titles(soupe):
+    # Extraire les balises de titre de la page
+    title_tags = soupe.find_all(['title', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+
+    # Récupérer le contenu des balises de titre
+    title_content = [tag.get_text().strip() for tag in title_tags]
+
+    return title_content
+
+
+def emphasis(soupe):
+    # Extraire les balises d'emphase de la page
+    emphasis_tags = soupe.find_all(['b', 'strong', 'em'])
+
+    # Récupérer le contenu des balises d'emphase
+    emphasis_content = [tag.get_text().strip() for tag in emphasis_tags]
+
+    return emphasis_content
+
 try:
     # Envoyer une requête HTTP à l'URL souhaitée
     response = requests.get('https://fr.wikipedia.org/wiki/France')
@@ -20,26 +56,15 @@ try:
         # Analyser le contenu HTML de la réponse
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # Extraire les URL de liens et leur texte associé
-        link_tags = soup.find_all('a')
-        links = []
-        for tag in link_tags:
-            if 'href' in tag.attrs:
-                # Enlève le fragment des url (ce qui se trouve après le #)
-                link_url = urljoin(response.url, tag['href'])
-                link_url = urldefrag(link_url)[0]
-                link_text = tag.get_text().strip()
-
-                if 'fr.wikipedia.org' in link_url:
-                    links.append({'url': link_url, 'text': link_text})
-
-        # Filtrer les liens en supprimant les doublons
-        unique_links = list({link['url']: link for link in links}.values())
+        links = get_url_text(response.url, soup)
 
         # Stocker les méta-données dans MongoDB
         client = MongoClient('mongodb://localhost:27017')
-        db = client['TPscrapiong']
-        collection = db['exemple']
+        db = client['TPscraping']
+        collection = db['Pages']
+
+        # Filtrer les liens en supprimant les doublons
+        unique_links = list({link['url']: link for link in links}.values())
 
         # Liste pour stocker tous les liens générés par les nouvelles pages
         all_generated_links = set(link['url'] for link in unique_links)
@@ -58,38 +83,17 @@ try:
                         # Analyser le contenu HTML de la réponse de la page
                         page_soup = BeautifulSoup(page_response.content, 'html.parser')
 
-                        # Extraire les balises de titre de la page
-                        title_tags = page_soup.find_all(['title', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+                        title_content = titles(page_soup)
 
-                        # Extraire les balises d'emphase de la page
-                        emphasis_tags = page_soup.find_all(['b', 'strong', 'em'])
+                        emphasis_content = emphasis(page_soup)
 
-                        # Récupérer le contenu des balises de titre et d'emphase
-                        title_content = [tag.get_text().strip() for tag in title_tags]
-                        emphasis_content = [tag.get_text().strip() for tag in emphasis_tags]
-
-                        # Extraire les liens de la nouvelle page
-                        new_links = []
-                        for tag in page_soup.find_all('a'):
-                            if 'href' in tag.attrs:
-                                new_link_url = urljoin(link['url'], tag['href'])
-                                new_link_url = urldefrag(new_link_url)[0]
-                                new_link_text = tag.get_text().strip()
-                                if 'fr.wikipedia.org' in new_link_url:
-                                    new_links.append({'url': new_link_url, 'text': new_link_text})
+                        new_links = get_url_text(link['url'], page_soup)
 
                         # Filtrer les nouveaux liens en supprimant les doublons
                         unique_new_links = [link for link in new_links if link['url'] not in all_generated_links]
 
                         # Mettre à jour la liste des liens générés par les nouvelles pages
                         all_generated_links.update(link['url'] for link in unique_new_links)
-
-                        # # Obtenir la différence entre unique_new_links et all_generated_links
-                        # difference_links = [link for link in unique_new_links if link['url'] not in all_generated_links]
-                        #
-                        # # Afficher la différence des URL
-                        # for link in difference_links:
-                        #     print(link['url'])
 
                         collection.insert_one({
                             'url': link['url'],
