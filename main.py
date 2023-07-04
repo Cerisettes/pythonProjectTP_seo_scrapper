@@ -4,7 +4,6 @@ from pymongo import MongoClient
 from urllib.parse import urljoin, urldefrag
 import time
 
-
 # Nombre maximum de tentatives
 max_attempts = 10
 
@@ -47,6 +46,25 @@ def emphasis(soupe):
 
     return emphasis_content
 
+
+def insert_page(dict, t_content, e_content, unique_l):
+    if unique_l:
+        collection.insert_one({
+            'url': dict['url'],
+            'text': dict['text'],
+            'title': t_content,
+            'emphasis': e_content,
+            'link': unique_l
+        })
+    else:
+        collection.insert_one({
+            'url': dict['url'],
+            'text': dict['text'],
+            'title': t_content,
+            'emphasis': e_content,
+        })
+
+
 try:
     # Envoyer une requête HTTP à l'URL souhaitée
     response = requests.get('https://fr.wikipedia.org/wiki/France')
@@ -69,8 +87,15 @@ try:
         # Liste pour stocker tous les liens générés par les nouvelles pages
         all_generated_links = set(link['url'] for link in unique_links)
 
+        # Insertion de la première page de référence
+        title_content = titles(soup)
+
+        emphasis_content = emphasis(soup)
+
+        insert_page(links[0], title_content, emphasis_content, unique_links)
+
         # Insérer les méta-données dans la collection
-        for link in unique_links[:10]:
+        for link in unique_links[1:10]:
             # Boucle pour les tentatives de récupération
             for attempt in range(1, max_attempts + 1):
 
@@ -95,13 +120,8 @@ try:
                         # Mettre à jour la liste des liens générés par les nouvelles pages
                         all_generated_links.update(link['url'] for link in unique_new_links)
 
-                        collection.insert_one({
-                            'url': link['url'],
-                            'text': link['text'],
-                            'title': title_content,
-                            'emphasis': emphasis_content,
-                            'link': unique_new_links
-                        })
+                        insert_page(link, title_content, emphasis_content, unique_new_links)
+
                         # Mettre à jour le champ 'link' du document avec tous les liens
                         collection.update_one({'url': link['url']}, {'$set': {'link': unique_new_links}})
 
