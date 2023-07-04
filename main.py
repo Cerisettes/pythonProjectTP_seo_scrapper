@@ -61,7 +61,7 @@ try:
         # Stocker les méta-données dans MongoDB
         client = MongoClient('mongodb://localhost:27017')
         db = client['TPscraping']
-        collection = db['Pages']
+        collection = db['Pages_web']
 
         # Filtrer les liens en supprimant les doublons
         unique_links = list({link['url']: link for link in links}.values())
