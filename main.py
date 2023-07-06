@@ -1,143 +1,160 @@
+import sys
 import requests
 from bs4 import BeautifulSoup
 from pymongo import MongoClient
-from urllib.parse import urljoin, urldefrag
+from urllib.parse import urljoin, urldefrag, urlparse
+import threading
+from queue import Queue
 import time
 
-# Nombre maximum de tentatives
-max_attempts = 10
+class Scraper:
+    def __init__(self, start_urls, max_depth=3, domain_limit=None, directory_prefix=None):
+        self.start_urls = start_urls
+        self.max_depth = max_depth
+        self.domain_limit = domain_limit
+        self.directory_prefix = directory_prefix
+        self.visited_urls = set()
+        self.db_client = MongoClient('mongodb://localhost:27017/')
+        self.db = self.db_client['scraping_db']
+        self.link_collection = self.db['link']
+        self.metadata_collection = self.db['metadata']
+        self.pending_link_collection = self.db['pending_link']
+        self.journal_collection = self.db['journal']
+        self.url_queue = Queue()
+        self.url_timestamps = {}
+        self.counter = 0
 
-# Temps d'attente en secondes entre chaque tentative
-retry_interval = 60
+    def scrape_website(self):
+        for start_url in self.start_urls:
+            self.url_queue.put(start_url)
 
+        # Lancer les threads de scraping
+        for _ in range(len(self.start_urls)):
+            t = threading.Thread(target=self._scrape_links)
+            t.daemon = True
+            t.start()
 
-def get_url_text(url, soupe):
-    # Extraire les URL de liens et leur texte associé
-    link_tags = soupe.find_all('a')
-    links = []
-    for tag in link_tags:
-        if 'href' in tag.attrs:
-            # Enlève le fragment des url (ce qui se trouve après le #)
-            link_url = urljoin(url, tag['href'])
-            link_url = urldefrag(link_url)[0]
-            link_text = tag.get_text().strip()
+        # Attendre que toutes les URLs soient traitées
+        self.url_queue.join()
 
-            if 'fr.wikipedia.org' in link_url:
-                links.append({'url': link_url, 'text': link_text})
-    return links
+        print('Web scraping terminé.')
 
+    def _scrape_links(self):
+        while True:
+            url = self.url_queue.get()
 
-def titles(soupe):
-    # Extraire les balises de titre de la page
-    title_tags = soupe.find_all(['title', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+            if url in self.url_timestamps:
+                elapsed_time = time.time() - self.url_timestamps[url]
+                if elapsed_time < time_threshold:
+                    continue
 
-    # Récupérer le contenu des balises de titre
-    title_content = [tag.get_text().strip() for tag in title_tags]
+            self.url_timestamps[url] = time.time()
 
-    return title_content
+            try:
+                response = requests.get(url)
+                if self.counter == 10:
+                    print('Le nombre maximum de documents a été atteint. Arrêt du web scraping.')
+                    sys.exit()
 
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.content, 'html.parser')
 
-def emphasis(soupe):
-    # Extraire les balises d'emphase de la page
-    emphasis_tags = soupe.find_all(['b', 'strong', 'em'])
+                    new_links = self._get_url_links(url, soup)
 
-    # Récupérer le contenu des balises d'emphase
-    emphasis_content = [tag.get_text().strip() for tag in emphasis_tags]
+                    unique_new_links = list(set(new_links))
 
-    return emphasis_content
+                    # Collection 1: link
+                    self._insert_links(url, unique_new_links)
 
+                    # Collection 2: metadata
+                    self._insert_metadata(url)
 
-def insert_page(dict, t_content, e_content, unique_l):
-    if unique_l:
-        collection.insert_one({
-            'url': dict['url'],
-            'text': dict['text'],
-            'title': t_content,
-            'emphasis': e_content,
-            'link': unique_l
-        })
-    else:
-        collection.insert_one({
-            'url': dict['url'],
-            'text': dict['text'],
-            'title': t_content,
-            'emphasis': e_content,
-        })
+                    # Collection 3: pending_link
+                    self._insert_pending_links(url, unique_new_links)
 
+                    # Collection 4: journal
+                    self._insert_journal(url)
+                    self.counter += 1
 
-try:
-    # Envoyer une requête HTTP à l'URL souhaitée
-    response = requests.get('https://fr.wikipedia.org/wiki/France')
+                else:
+                    print(f'La requête pour la page {url} a échoué avec le code de statut : {response.status_code}')
+            except requests.exceptions.RequestException as e:
+                print(f'Erreur lors de la requête pour la page {url}: {e}')
+            finally:
+                self.url_queue.task_done()
 
-    # Vérifier si la requête a réussi
-    if response.status_code == 200:
-        # Analyser le contenu HTML de la réponse
+    def _get_url_links(self, url, soup):
+        link_tags = soup.find_all('a')
+        links = []
+        for tag in link_tags:
+            if 'href' in tag.attrs:
+                link_url = urljoin(url, tag['href'])
+                link_url = urldefrag(link_url)[0]
+                parsed_url = urlparse(url)
+
+                if parsed_url.netloc in link_url:
+                    links.append(link_url)
+        return links
+
+    def _insert_links(self, url, unique_links):
+        documents = []
+        for link in unique_links:
+            documents.append({
+                "_id": url + link + time.strftime('%Y-%m-%d %H:%M:%S'),
+                'link': link,
+                'status': 'en-cours'
+            })
+        self.link_collection.insert_many(documents)
+
+    def _insert_metadata(self, url):
+        # Insertion des données de la page
+
+        response = requests.get(url)
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        links = get_url_text(response.url, soup)
+        # Extraire les balises de titre de la page
+        title_tags = soup.find_all(['title', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
 
-        # Stocker les méta-données dans MongoDB
-        client = MongoClient('mongodb://localhost:27017')
-        db = client['TPscraping']
-        collection = db['Pages_web']
+        # Récupérer le contenu des balises de titre
+        title_content = [tag.get_text().strip() for tag in title_tags]
 
-        # Filtrer les liens en supprimant les doublons
-        unique_links = list({link['url']: link for link in links}.values())
+        # Extraire les balises d'emphase de la page
+        emphasis_tags = soup.find_all(['b', 'strong', 'em'])
 
-        # Liste pour stocker tous les liens générés par les nouvelles pages
-        all_generated_links = set(link['url'] for link in unique_links)
+        # Récupérer le contenu des balises d'emphase
+        emphasis_content = [tag.get_text().strip() for tag in emphasis_tags]
 
-        # Insertion de la première page de référence
-        title_content = titles(soup)
+        document = {
+            '_id': url,
+            'date': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'titles': title_content,
+            'emphasis': emphasis_content
+        }
 
-        emphasis_content = emphasis(soup)
+        self.metadata_collection.insert_one(document)
 
-        insert_page(links[0], title_content, emphasis_content, unique_links)
+    def _insert_pending_links(self, url, unique_links):
+        for link in unique_links:
+            document = {
+                "_id": url + link + time.strftime('%Y-%m-%d %H:%M:%S'),
+                'link': link,
+                'status': 'en-cours'
+            }
+            self.pending_link_collection.insert_one(document)
+            self.url_queue.put(link)
 
-        # Insérer les méta-données dans la collection
-        for link in unique_links[1:10]:
-            # Boucle pour les tentatives de récupération
-            for attempt in range(1, max_attempts + 1):
+    def _insert_journal(self, url):
+        document = {
+            '_id': url + time.strftime('%Y-%m-%d %H:%M:%S'),
+            'url': url
+        }
+        self.journal_collection.insert_one(document)
 
-                try:
-                    # Envoyer une requête HTTP à l'URL du lien
-                    page_response = requests.get(link['url'])
+time_threshold = 300  # 5 minutes
 
-                    # Vérifier si la requête a réussi
-                    if page_response.status_code == 200:
-                        # Analyser le contenu HTML de la réponse de la page
-                        page_soup = BeautifulSoup(page_response.content, 'html.parser')
+start_urls = [
+    'https://fr.wikipedia.org/wiki/France'
+]
 
-                        title_content = titles(page_soup)
-
-                        emphasis_content = emphasis(page_soup)
-
-                        new_links = get_url_text(link['url'], page_soup)
-
-                        # Filtrer les nouveaux liens en supprimant les doublons
-                        unique_new_links = [link for link in new_links if link['url'] not in all_generated_links]
-
-                        # Mettre à jour la liste des liens générés par les nouvelles pages
-                        all_generated_links.update(link['url'] for link in unique_new_links)
-
-                        insert_page(link, title_content, emphasis_content, unique_new_links)
-
-                        # Mettre à jour le champ 'link' du document avec tous les liens
-                        collection.update_one({'url': link['url']}, {'$set': {'link': unique_new_links}})
-
-                        # Sortir de la boucle si la récupération réussit
-                        break
-
-                    else:
-                        print(f'La requête pour la page {link["url"]} a '
-                              f'échoué avec le code de statut : {page_response.status_code}')
-                except requests.exceptions.RequestException as e:
-                    print(f'Erreur lors de la requête pour la page {link["url"]}: {e}')
-                # Attendre le délai spécifié avant la prochaine tentative
-                time.sleep(retry_interval)
-
-    else:
-        print('La requête a échoué avec le code de statut :', response.status_code)
-
-except requests.exceptions.RequestException as e:
-    print('Erreur lors de la requête pour la page principale :', e)
+scraper = Scraper(start_urls, max_depth=3, domain_limit='fr.wikipedia.org', directory_prefix='/')
+scraper.scrape_website()
