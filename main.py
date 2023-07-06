@@ -134,9 +134,9 @@ class Scraper:
 # exemple d'urls à tester = ['https://fr.wikipedia.org/wiki/France', 'https://fr.wikipedia.org/wiki/Pomme']
 
 parser = argparse.ArgumentParser(description='Scraper')
-parser.add_argument('url', type=str, help='Starting URL for web scraping')
+parser.add_argument('url', type=str, nargs = '+', help='Starting URL for web scraping')
 
 args = parser.parse_args()
 
-scraper = Scraper([args.url])
+scraper = Scraper(args.url)
 scraper.scrape_website()
