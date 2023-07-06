@@ -4,6 +4,7 @@ import pymongo
 from urllib.parse import urljoin, urldefrag, urlparse
 import datetime
 import argparse
+import time
 
 
 class Scraper:
@@ -49,9 +50,9 @@ class Scraper:
     def _scrape_link(self, url):
         try:
             print("get_url", url)
-            response = requests.get(url)
+            response = self.retry_request(url)
 
-            if response.status_code == 200:
+            if response is not None:
                 soup = BeautifulSoup(response.content, 'html.parser')
 
                 new_links = self._get_url_links(url, soup)
@@ -67,10 +68,24 @@ class Scraper:
                 # Collection 3: journal
                 self._insert_journal(url)
 
-            else:
-                print(f'La requête pour la page {url} a échoué avec le code de statut : {response.status_code}')
         except requests.exceptions.RequestException as e:
             print(f'Erreur lors de la requête pour la page {url}: {e}')
+
+    def retry_request(self, url, max_retries=10, retry_interval=60):
+        for i in range(max_retries):
+            try:
+                response = requests.get(url)
+                if response.status_code == 200:
+                    return response
+                else:
+                    print(f'La requête pour la page {url} a échoué avec le code de statut : {response.status_code}')
+            except requests.exceptions.RequestException as e:
+                print(f'Erreur lors de la requête pour la page {url}: {e}')
+
+            print(f"Réessayer la requête {i+1}")
+            time.sleep(retry_interval)
+
+        return None
 
     def _get_url_links(self, url, soup):
         link_tags = soup.find_all('a')
