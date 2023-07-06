@@ -1,17 +1,15 @@
-import sys
 import requests
 from bs4 import BeautifulSoup
 import pymongo
 from urllib.parse import urljoin, urldefrag, urlparse
 import datetime
+import argparse
 
 
 class Scraper:
-    def __init__(self, start_urls, max_depth=3, domain_limit=None, directory_prefix=None):
+    def __init__(self, start_urls):
+        self.domain_limit = 'fr.wikipedia.org'
         self.start_urls = start_urls
-        self.max_depth = max_depth
-        self.domain_limit = domain_limit
-        self.directory_prefix = directory_prefix
         self.visited_urls = set()
         self.db_client = pymongo.MongoClient('mongodb://localhost:27017/')
         self.db = self.db_client['scraping_db']
@@ -133,9 +131,12 @@ class Scraper:
             self.journal_collection.find_one_and_update({'_id': url}, {"$set": {'fin_session': datetime.datetime.now()}})
 
 
-time_threshold = 300  # 5 minutes
+# exemple d'urls à tester = ['https://fr.wikipedia.org/wiki/France', 'https://fr.wikipedia.org/wiki/Pomme']
 
-start_urls = ['https://fr.wikipedia.org/wiki/France', 'https://fr.wikipedia.org/wiki/Pomme']
+parser = argparse.ArgumentParser(description='Scraper')
+parser.add_argument('url', type=str, help='Starting URL for web scraping')
 
-scraper = Scraper(start_urls, max_depth=3, domain_limit='fr.wikipedia.org', directory_prefix='/')
+args = parser.parse_args()
+
+scraper = Scraper([args.url])
 scraper.scrape_website()
