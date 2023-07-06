@@ -3,7 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import pymongo
 from urllib.parse import urljoin, urldefrag, urlparse
-import time
+import datetime
 
 
 class Scraper:
@@ -23,29 +23,29 @@ class Scraper:
     def scrape_website(self):
         for start_url in self.start_urls:
             self._scrape_link(start_url)
-        # tant qu'il reste des liens en attentes et < 10 documents'
-        while self.metadata_collection.count_documents({}) < 10 and self.link_collection.find({'status': 'a traiter'}):
-            # récupère le lien à scraper
-            doc = self.link_collection.find_one({"status": 'a traiter'})
-            link = doc['_id']
+            start_time = datetime.datetime.now()
+            self._insert_journal(start_url)
+            self.journal_collection.update_one({'_id': start_url}, {"$set": {'début_session': start_time}})
+            # tant qu'il reste des liens en attentes et < 10 documents
+            while self.metadata_collection.count_documents({}) < 10 and self.link_collection.find({'status': 'a traiter'}):
+                # récupère le lien à scraper
+                doc = self.link_collection.find_one({"status": 'a traiter'})
+                link = doc['_id']
 
-            # # si le lien est en entrain d'être scrapper mais que c'est trop long alors on relance (la machine qui l'a traité a peut-être planté ou autre erreur)
-            # if link in self.url_timestamps:
-            #     elapsed_time = time.time() - self.url_timestamps[link]
-            #     if elapsed_time < time_threshold:
-            #         continue
+                # modifie le status en "en-cours"
+                self.link_collection.find_one_and_update({'_id': link}, {"$set": {'status': 'en-cours'}})
+                start_time = datetime.datetime.now()
+                # web scraping de la page donnée
+                self._scrape_link(link)
+                # si le lien est en entrain d'être scrapper mais que c'est trop long alors on relance (la machine qui l'a traité a peut-être planté ou autre erreur)
+                end_time = datetime.datetime.now()
 
-            # self.url_timestamps[link] = time.time()
-            # print(self.url_timestamps[link])
-            print(link)
-            # modifie le status en "en-cours"
-            self.link_collection.find_one_and_update({'_id': link}, {"$set": {'status': 'en-cours'}})
-            # web scraping de la page donnée
-            self._scrape_link(link)
-            # modifie le status en "fini"
-            self.link_collection.find_one_and_update({'_id': link}, {"$set": {'status': 'fini'}})
+                # modifie le status en "fini"
+                self.link_collection.find_one_and_update({'_id': link}, {"$set": {'status': 'fini'}})
+                self.journal_collection.find_one_and_update({'_id': link}, {"$set": {'début': start_time, 'fin': end_time}})
 
-        print('Web scraping terminé.')
+            print('Web scraping terminé.')
+            self._insert_journal(start_url)
 
     def _scrape_link(self, url):
         try:
@@ -123,10 +123,13 @@ class Scraper:
 
 
     def _insert_journal(self, url):
-        document = {
-            '_id': url,
-        }
-        self.journal_collection.insert_one(document)
+        try:
+            document = {
+                '_id': url,
+            }
+            self.journal_collection.insert_one(document)
+        except pymongo.errors.DuplicateKeyError:
+            self.journal_collection.find_one_and_update({'_id': url}, {"$set": {'fin_session': datetime.datetime.now()}})
 
 
 time_threshold = 300  # 5 minutes
