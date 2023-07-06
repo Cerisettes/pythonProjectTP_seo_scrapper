@@ -8,7 +8,7 @@ import time
 
 
 class Scraper:
-    def __init__(self, start_urls):
+    def __init__(self, start_urls, nb_doc):
         self.domain_limit = 'fr.wikipedia.org'
         self.start_urls = start_urls
         self.visited_urls = set()
@@ -18,10 +18,15 @@ class Scraper:
         self.metadata_collection = self.db['content']
         self.journal_collection = self.db['journal']
         self.count = 0
+        self.nb_doc = nb_doc
+        # Nombre maximum de tentatives
+        self.max_attempts = 10
+        # Temps d'attente en secondes entre chaque tentative
+        self.retry_interval = 60
 
     def scrape_website(self):
         for start_url in self.start_urls:
-            self.count += 10
+            self.count += self.nb_doc
             self._scrape_link(start_url)
             start_time = datetime.datetime.now()
             self._insert_journal(start_url)
@@ -34,7 +39,7 @@ class Scraper:
 
                 # modifie le status en "en-cours"
                 self.link_collection.find_one_and_update({'_id': link}, {"$set": {'status': 'en-cours'}})
-                start_time = datetime.datetime.now()
+                self.start_time = datetime.datetime.now()
                 # web scraping de la page donnée
                 self._scrape_link(link)
                 # si le lien est en entrain d'être scrapper mais que c'est trop long alors on relance (la machine qui l'a traité a peut-être planté ou autre erreur)
@@ -82,8 +87,14 @@ class Scraper:
             except requests.exceptions.RequestException as e:
                 print(f'Erreur lors de la requête pour la page {url}: {e}')
 
-            print(f"Réessayer la requête {i+1}")
+            print(f"Réessayer la requête {i + 1}")
             time.sleep(retry_interval)
+
+            # Vérifie si c'est trop long sinon relance la requête
+            elapsed_time = time.time() - self.start_time
+            if elapsed_time > 120:  # Initialisation à 2 min
+                print(f"Le traitement du lien {url} prend trop de temps. Relance de la requête.")
+                continue
 
         return None
 
@@ -150,8 +161,9 @@ class Scraper:
 
 parser = argparse.ArgumentParser(description='Scraper')
 parser.add_argument('url', type=str, nargs = '+', help='Starting URL for web scraping')
+parser.add_argument('count', type=int, help='Number of doc')
 
 args = parser.parse_args()
 
-scraper = Scraper(args.url)
+scraper = Scraper(args.url, args.count)
 scraper.scrape_website()
