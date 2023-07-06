@@ -18,16 +18,17 @@ class Scraper:
         self.link_collection = self.db['link']
         self.metadata_collection = self.db['content']
         self.journal_collection = self.db['journal']
-        self.url_timestamps = {}
+        self.count = 0
 
     def scrape_website(self):
         for start_url in self.start_urls:
+            self.count += 10
             self._scrape_link(start_url)
             start_time = datetime.datetime.now()
             self._insert_journal(start_url)
             self.journal_collection.update_one({'_id': start_url}, {"$set": {'début_session': start_time}})
             # tant qu'il reste des liens en attentes et < 10 documents
-            while self.metadata_collection.count_documents({}) < 10 and self.link_collection.find({'status': 'a traiter'}):
+            while self.metadata_collection.count_documents({}) < self.count and self.link_collection.find({'status': 'a traiter'}):
                 # récupère le lien à scraper
                 doc = self.link_collection.find_one({"status": 'a traiter'})
                 link = doc['_id']
@@ -134,7 +135,7 @@ class Scraper:
 
 time_threshold = 300  # 5 minutes
 
-start_urls = ['https://fr.wikipedia.org/wiki/France']
+start_urls = ['https://fr.wikipedia.org/wiki/France', 'https://fr.wikipedia.org/wiki/Pomme']
 
 scraper = Scraper(start_urls, max_depth=3, domain_limit='fr.wikipedia.org', directory_prefix='/')
 scraper.scrape_website()
