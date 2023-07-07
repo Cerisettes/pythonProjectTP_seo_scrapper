@@ -63,32 +63,32 @@ class Scraper:
         """
         for start_url in self.start_urls:
             self.count += self.nb_doc
-            self._scrape_link(start_url)
             start_time = datetime.datetime.now()
-            self._insert_journal(start_url)
-            self.journal_collection.update_one({'_id': start_url}, {"$set": {'start_session': start_time}})
+            self.journal_collection.insert_one({'id_session': start_url + str(start_time),'url': start_url, 'start_session': start_time})
+            self.journal_collection.find_one_and_update({'url': start_url}, {"$set": {'id_session': start_url + str(start_time), 'start_session': start_time}})
+            self._scrape_link(start_url, start_url)
             # tant qu'il reste des liens en attentes et < 10 documents
             while self.metadata_collection.count_documents({}) < self.count and self.link_collection.find({'status': 'to do'}):
                 # récupère le lien à scraper
                 doc = self.link_collection.find_one({"status": 'to do'})
-                link = doc['_id']
+                link = doc['url']
 
                 # modifie le status en "en-cours"
-                self.link_collection.find_one_and_update({'_id': link}, {"$set": {'status': 'in process'}})
+                self.link_collection.find_one_and_update({'url': link}, {"$set": {'status': 'in process'}})
                 self.start_time = datetime.datetime.now()
                 # web scraping de la page donnée
-                self._scrape_link(link)
+                self._scrape_link(link, start_url)
 
                 end_time = datetime.datetime.now()
 
                 # modifie le status en "fini"
-                self.link_collection.find_one_and_update({'_id': link}, {"$set": {'status': 'done'}})
-                self.journal_collection.find_one_and_update({'_id': link}, {"$set": {'start': start_time, 'end': end_time}})
+                self.link_collection.find_one_and_update({'url': link}, {"$set": {'status': 'done'}})
+                self.journal_collection.find_one_and_update({'url': link}, {"$set": {'start': start_time, 'end': end_time}})
 
+            self.journal_collection.find_one_and_update({'id_session': start_url + str(start_time)}, {"$set": {'end_session': datetime.datetime.now()}})
             print('Web scraping done.')
-            self._insert_journal(start_url)
 
-    def _scrape_link(self, url):
+    def _scrape_link(self, url, start_url):
         """
         Lance le web scraping sur des urls et insert directement dans la base de données les collections
 
@@ -115,7 +115,8 @@ class Scraper:
                 self._insert_metadata(url, soup)
 
                 # Collection 3: journal
-                self._insert_journal(url)
+                if url != start_url:
+                    self._insert_journal(url)
 
         except requests.exceptions.RequestException as e:
             print(f'Erreur lors de la requête pour la page {url}: {e}')
@@ -141,7 +142,7 @@ class Scraper:
                 else:
                     print(f'La requête pour la page {url} a échoué avec le code de statut : {response.status_code}')
                     document = {
-                        '_id': url,
+                        'url': url,
                         'error': response.status_code,
                         'date': datetime.datetime.now()
                     }
@@ -149,7 +150,7 @@ class Scraper:
             except requests.exceptions.RequestException as e:
                 print(f'Erreur lors de la requête pour la page {url}: {e}')
                 document = {
-                    '_id': url,
+                    'url': url,
                     'error': e,
                     'date': datetime.datetime.now()
                 }
@@ -159,7 +160,7 @@ class Scraper:
             time.sleep(retry_interval)
 
             elapsed_time = datetime.datetime.now() - self.start_time
-            if int(elapsed_time.total_seconds()) > 60:  # Test si cela fait 2 min
+            if int(elapsed_time.total_seconds()) > 60:  # Test si cela fait 1 min
                 print(f"Le traitement du lien {url} prend trop de temps. Relance de la requête.")
                 continue
 
@@ -201,7 +202,7 @@ class Scraper:
         for link in unique_links:
             try:
                 self.link_collection.insert_one({
-                    "_id": link,
+                    "url": link,
                     'status': 'to do',
                     'cookies': cookies
                 })
@@ -232,7 +233,7 @@ class Scraper:
             emphasis_content = [tag.get_text().strip() for tag in emphasis_tags]
 
             document = {
-                '_id': url,
+                'url': url,
                 'html': str(soup),
                 'titles': title_content,
                 'emphasis': emphasis_content
@@ -252,11 +253,11 @@ class Scraper:
         """
         try:
             document = {
-                '_id': url,
+                'url': url,
             }
             self.journal_collection.insert_one(document)
         except pymongo.errors.DuplicateKeyError:
-            self.journal_collection.find_one_and_update({'_id': url}, {"$set": {'end_session': datetime.datetime.now()}})
+            pass
 
 
 # exemple d'urls à tester = ['https://fr.wikipedia.org/wiki/France', 'https://fr.wikipedia.org/wiki/Pomme']
