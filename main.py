@@ -66,15 +66,15 @@ class Scraper:
             self._scrape_link(start_url)
             start_time = datetime.datetime.now()
             self._insert_journal(start_url)
-            self.journal_collection.update_one({'_id': start_url}, {"$set": {'début_session': start_time}})
+            self.journal_collection.update_one({'_id': start_url}, {"$set": {'start_session': start_time}})
             # tant qu'il reste des liens en attentes et < 10 documents
-            while self.metadata_collection.count_documents({}) < self.count and self.link_collection.find({'status': 'a traiter'}):
+            while self.metadata_collection.count_documents({}) < self.count and self.link_collection.find({'status': 'to do'}):
                 # récupère le lien à scraper
-                doc = self.link_collection.find_one({"status": 'a traiter'})
+                doc = self.link_collection.find_one({"status": 'to do'})
                 link = doc['_id']
 
                 # modifie le status en "en-cours"
-                self.link_collection.find_one_and_update({'_id': link}, {"$set": {'status': 'en-cours'}})
+                self.link_collection.find_one_and_update({'_id': link}, {"$set": {'status': 'in process'}})
                 self.start_time = datetime.datetime.now()
                 # web scraping de la page donnée
                 self._scrape_link(link)
@@ -82,10 +82,10 @@ class Scraper:
                 end_time = datetime.datetime.now()
 
                 # modifie le status en "fini"
-                self.link_collection.find_one_and_update({'_id': link}, {"$set": {'status': 'fini'}})
-                self.journal_collection.find_one_and_update({'_id': link}, {"$set": {'début': start_time, 'fin': end_time}})
+                self.link_collection.find_one_and_update({'_id': link}, {"$set": {'status': 'done'}})
+                self.journal_collection.find_one_and_update({'_id': link}, {"$set": {'start': start_time, 'end': end_time}})
 
-            print('Web scraping terminé.')
+            print('Web scraping done.')
             self._insert_journal(start_url)
 
     def _scrape_link(self, url):
@@ -142,22 +142,24 @@ class Scraper:
                     print(f'La requête pour la page {url} a échoué avec le code de statut : {response.status_code}')
                     document = {
                         '_id': url,
-                        'erreur': response.status_code
+                        'error': response.status_code,
+                        'date': datetime.datetime.now()
                     }
                     self.journal_collection.insert_one(document)
             except requests.exceptions.RequestException as e:
                 print(f'Erreur lors de la requête pour la page {url}: {e}')
                 document = {
                     '_id': url,
-                    'erreur': e
+                    'error': e,
+                    'date': datetime.datetime.now()
                 }
                 self.journal_collection.insert_one(document)
 
-            print(f"Réessayer la requête {i + 1}")
+            print(f"Réessayer la requête {i + 1} fois")
             time.sleep(retry_interval)
 
-            elapsed_time = time.time() - self.start_time
-            if elapsed_time > 120:  # Test si cela fait 2 min
+            elapsed_time = datetime.datetime.now() - self.start_time
+            if int(elapsed_time.total_seconds()) > 60:  # Test si cela fait 2 min
                 print(f"Le traitement du lien {url} prend trop de temps. Relance de la requête.")
                 continue
 
@@ -200,7 +202,7 @@ class Scraper:
             try:
                 self.link_collection.insert_one({
                     "_id": link,
-                    'status': 'a traiter',
+                    'status': 'to do',
                     'cookies': cookies
                 })
             except pymongo.errors.DuplicateKeyError:
@@ -254,7 +256,7 @@ class Scraper:
             }
             self.journal_collection.insert_one(document)
         except pymongo.errors.DuplicateKeyError:
-            self.journal_collection.find_one_and_update({'_id': url}, {"$set": {'fin_session': datetime.datetime.now()}})
+            self.journal_collection.find_one_and_update({'_id': url}, {"$set": {'end_session': datetime.datetime.now()}})
 
 
 # exemple d'urls à tester = ['https://fr.wikipedia.org/wiki/France', 'https://fr.wikipedia.org/wiki/Pomme']
