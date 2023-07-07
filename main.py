@@ -140,8 +140,18 @@ class Scraper:
                     return response
                 else:
                     print(f'La requête pour la page {url} a échoué avec le code de statut : {response.status_code}')
+                    document = {
+                        '_id': url,
+                        'erreur': response.status_code
+                    }
+                    self.journal_collection.insert_one(document)
             except requests.exceptions.RequestException as e:
                 print(f'Erreur lors de la requête pour la page {url}: {e}')
+                document = {
+                    '_id': url,
+                    'erreur': e
+                }
+                self.journal_collection.insert_one(document)
 
             print(f"Réessayer la requête {i + 1}")
             time.sleep(retry_interval)
