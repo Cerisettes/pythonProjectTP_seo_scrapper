@@ -5,6 +5,7 @@ from urllib.parse import urljoin, urldefrag, urlparse
 import datetime
 import argparse
 import time
+import pickle
 
 
 class Scraper:
@@ -98,6 +99,7 @@ class Scraper:
         try:
             print("get_url", url)
             response = self.retry_request(url)
+            cookies = response.cookies
 
             if response is not None:
                 soup = BeautifulSoup(response.content, 'html.parser')
@@ -107,7 +109,7 @@ class Scraper:
                 unique_new_links = sorted(set(new_links))
 
                 # Collection 1: link
-                self._insert_links(unique_new_links)
+                self._insert_links(unique_new_links, pickle.dumps(cookies))
 
                 # Collection 2: metadata
                 self._insert_metadata(url, soup)
@@ -176,7 +178,7 @@ class Scraper:
                     links.append(link_url)
         return links
 
-    def _insert_links(self, unique_links):
+    def _insert_links(self, unique_links, cookies):
         """
         Insert des documents dans la collection link
 
@@ -188,7 +190,8 @@ class Scraper:
             try:
                 self.link_collection.insert_one({
                     "_id": link,
-                    'status': 'a traiter'
+                    'status': 'a traiter',
+                    'cookies': cookies
                 })
             except pymongo.errors.DuplicateKeyError:
                 pass
