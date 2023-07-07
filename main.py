@@ -8,7 +8,38 @@ import time
 
 
 class Scraper:
+    """
+    Retourne une base de données et un ensemble de collections dans MongoDB
+
+        Attributes:
+            start_urls (str): une liste de chaines de charactères comprenant un ou plusieurs urls
+            nb_doc (int): nombre de documents pour la collection content (par url)
+        Methods:
+            scrape_website:
+                Lance le scraping sur une page web donnée
+            _scrape_link:
+                Lance le scraping sur les urls générés par la page web donnée
+            retry_request:
+                Permet de tester si un scraping dure trop longtemps
+            _get_url_links:
+                Récupère les liens contenu sur une page web donnée
+            _insert_content:
+                Insert dans la collection content dans MongoDB le contenu d'une page web
+            _insert_journal:
+                Insert dans la collection journal dans MongoDB les évènements lors du processus
+            _insert_links:
+                Insert dans la collection link dans MongoDB l'ensemble des liens récupérer à partir d'une page web donnée'
+
+    """
     def __init__(self, start_urls, nb_doc):
+        """
+        Initialise l'ensemble des attributs nécessaires pour le web scraping
+
+            Parameters:
+                start_urls (str): un ou plusieurs urls
+                nb_doc (int): nombre de docuements récupérés dans la collection content
+
+        """
         self.domain_limit = 'fr.wikipedia.org'
         self.start_urls = start_urls
         self.visited_urls = set()
@@ -25,6 +56,10 @@ class Scraper:
         self.retry_interval = 60
 
     def scrape_website(self):
+        """
+        Lance une session de web scraping
+
+        """
         for start_url in self.start_urls:
             self.count += self.nb_doc
             self._scrape_link(start_url)
@@ -42,7 +77,7 @@ class Scraper:
                 self.start_time = datetime.datetime.now()
                 # web scraping de la page donnée
                 self._scrape_link(link)
-                # si le lien est en entrain d'être scrapper mais que c'est trop long alors on relance (la machine qui l'a traité a peut-être planté ou autre erreur)
+
                 end_time = datetime.datetime.now()
 
                 # modifie le status en "fini"
@@ -53,15 +88,22 @@ class Scraper:
             self._insert_journal(start_url)
 
     def _scrape_link(self, url):
+        """
+        Lance le web scraping sur des urls et insert directement dans la base de données les collections
+
+            Parameter:
+                url (str): une chaine de charactère qui correspond à une url
+
+        """
         try:
             print("get_url", url)
             response = self.retry_request(url)
 
             if response is not None:
                 soup = BeautifulSoup(response.content, 'html.parser')
-
+                # Récupère les liens d'une page web
                 new_links = self._get_url_links(url, soup)
-
+                # Enlève les doublons
                 unique_new_links = sorted(set(new_links))
 
                 # Collection 1: link
@@ -77,6 +119,18 @@ class Scraper:
             print(f'Erreur lors de la requête pour la page {url}: {e}')
 
     def retry_request(self, url, max_retries=10, retry_interval=60):
+        """
+        Test pour savoir si un lien met trop de temps à être scrapé
+
+            Parameters:
+                url (str): une chaine de charactère qui correspond à une url
+                max_retries (int): nombre de tentatives
+                retry_interval (int): intervalle avant de re-tester
+
+            Return:
+                response (reponse): la réponse du serveur suite à une requête HTTP
+
+        """
         for i in range(max_retries):
             try:
                 response = requests.get(url)
@@ -90,28 +144,46 @@ class Scraper:
             print(f"Réessayer la requête {i + 1}")
             time.sleep(retry_interval)
 
-            # Vérifie si c'est trop long sinon relance la requête
             elapsed_time = time.time() - self.start_time
-            if elapsed_time > 120:  # Initialisation à 2 min
+            if elapsed_time > 120:  # Test si cela fait 2 min
                 print(f"Le traitement du lien {url} prend trop de temps. Relance de la requête.")
                 continue
 
         return None
 
     def _get_url_links(self, url, soup):
+        """
+        Récupère les liens issus d'une page web
+
+            Parameters:
+                url (str): une chaine de charactère qui correspond à une url
+                soup (BeautifulSoup): un objet BeautifulSoup qui représente le document web
+
+            Return:
+                links (list): liste des liens récupérés
+        """
         link_tags = soup.find_all('a')
         links = []
         for tag in link_tags:
             if 'href' in tag.attrs:
                 link_url = urljoin(url, tag['href'])
+                # Enlève le fragment
                 link_url = urldefrag(link_url)[0]
+                # Parse un url en 6 parties
                 parsed_url = urlparse(link_url)
-
+                # Test si le domaine de l'url reste bien dans le domaine délimité
                 if parsed_url.netloc == self.domain_limit:
                     links.append(link_url)
         return links
 
     def _insert_links(self, unique_links):
+        """
+        Insert des documents dans la collection link
+
+                Parameter:
+                    unique_links (list): les liens issus d'une page web sans doublons
+
+        """
         for link in unique_links:
             try:
                 self.link_collection.insert_one({
@@ -122,6 +194,14 @@ class Scraper:
                 pass
 
     def _insert_metadata(self, url, soup):
+        """
+        Insert les données contenu d'une page web dans la collection content
+
+            Parameters:
+                url (str): une chaine de charactère qui correspond à une url
+                soup (BeautifulSoup): un objet BeautifulSoup qui représente le document web
+
+        """
         try:
             # Insertion des données de la page
             # Extraire les balises de titre de la page
@@ -148,6 +228,13 @@ class Scraper:
 
 
     def _insert_journal(self, url):
+        """
+        Insert les évènements dans la collection journal
+
+            Parameter:
+                url (str): une chaine de charactère qui correspond à une url
+
+        """
         try:
             document = {
                 '_id': url,
